@@ -1,0 +1,953 @@
+/* Editor : Santipap.Poor and Chatchawan.phua */
+// Where : BU-Eng
+// When :22-11-2019
+// How : MiniProject
+	
+
+#include <p30f4011.h>	// generic header file dsPIC
+#include <uart.h>		// UART Lib
+#include <stdlib.h>
+#include <timer.h>
+#include <math.h>
+
+// System Configuration
+_FOSC(XT_PLL4 & CSW_FSCM_OFF);	// SW disable, Mon Disable, XT w/PLL4
+_FWDT(WDT_OFF);				// Watchdog timer off
+_FBORPOR(PBOR_OFF&PWRT_64&MCLR_EN);
+_FGS(CODE_PROT_OFF);
+
+//keyped 
+#define Row1 _RB0 //Pin RB0 Output
+#define Row2 _RB1 //Pin RB1 Output
+#define Row3 _RB2 //Pin RB2 Output
+#define Row4 _RB3 //Pin RB3 Output
+#define Col1 _RB4 //Pin RB4 Input
+#define Col2 _RB5 //Pin RB5 Input
+#define Col3 _RB6 //Pin RB6 Input
+
+#define TRUE	1
+
+//LED LP
+#define TRIS_LED TRISE
+#define OUT_0	_RE0
+#define OUT_1	_RE1
+#define OUT_2	_RE2
+#define OUT_3	_RE3
+#define OUT_4	_RE4
+#define OUT_5	_RE5
+#define OUT_6	_RE6
+#define OUT_7	_RE7
+
+//LED Correct and Wrong
+#define TRIS_LED2 TRISF
+#define OUT2_0	_RF3
+#define OUT2_1	_RF1
+
+//Switch for skip 
+#define TRIS_SW1 TRISF
+#define IN2_0	_RF2
+
+//Show value uart
+char  uart_buf[40];
+
+void _ISR _U1TXInterrupt(void);
+void _ISR _U1RXInterrupt(void);
+void uart1_init(void);	//Uart
+void Delay_MS(int);	//Delay
+void _ISR _T1Interrup(void);
+void Timer1_Init(void);	//On timer
+void Timer2_Init(void);	//Off timer
+void Quiz(void);	//Function show Question
+void YN(void);		//Check Answer
+void ALLrun(void);	//Run all function 
+void Correct(void);	//After answer correct
+void SWRandom(void);	//Switch skip Question
+void Wrong(void);	//After answer Wrong
+void Random(void);	//Random Question
+void Coutend(int);	//Count LED LP
+char scankey(void);	//Get value from keypad
+
+
+int skip=2;	//Skip 2 time
+int i=0;	//Use looping for
+int spec=0;	//Check that press keypad
+int t;		//Get value from random
+int o;		//Number of Question
+int x;		//Get value Question from Wrong
+int score=0;	//Value count score
+int coutend =5;	//Value LP
+int countdown=10;//Value time countdown
+char current_key = '.'; //Define the key as "dot"
+char current_key1 = '.';
+char current_key2 = '.';
+char current_key3 = '.';
+
+int LoopSt = 1; //Loop Check that press keypad
+int Loop1=0;	//Loop Question that Wrong
+int Loop2=0;	//Loop Check if the question is repeated
+int notfix[15]={20,20,20,20,20,20,20,20,20,20,20,20,20,20,20};//Keep the questions that have already been asked.
+int cnotfix=0; //Check if the question is repeated
+int tick=1;	//Check time
+
+
+
+void _ISR _T1Interrupt(void)
+{
+
+	if(++tick==4) //if tick=4 = 1 second
+	{
+		
+		tick=0;
+		countdown--;
+		if(spec==0)	//if not press 
+		{
+			sprintf(uart_buf,"\r %d ||",countdown);
+			putsUART1((unsigned int *)uart_buf); 
+			while(BusyUART1());
+		}
+		else if(spec==1) //if pressed
+		{	
+			sprintf(uart_buf,"\r %d ||",countdown);
+			putsUART1((unsigned int *)uart_buf); 
+			while(BusyUART1());
+			putcUART1(current_key);
+			while(BusyUART1());
+		}
+		else
+		{
+			;
+		}
+
+		if(countdown==0) //that time out
+		{
+			coutend--;
+			Coutend(coutend);
+			countdown=10;
+			sprintf(uart_buf,"\n\rLP = %d",coutend);
+			putsUART1((unsigned int *)uart_buf); 
+			while(BusyUART1());
+			sprintf(uart_buf,"\r\nSkip = %d\r\n",skip);
+			putsUART1((unsigned int *)uart_buf);
+			while(BusyUART1()); 
+			sprintf(uart_buf,"Score = %d\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",score);
+			putsUART1((unsigned int *)uart_buf); 
+			while(BusyUART1());
+			Quiz();
+			//YN();
+		}
+		else 
+		{
+			;
+		}
+	} 
+	tick++;
+	_T1IF=0;
+}
+
+int main(void)
+{
+
+		//Variablee
+	LATE = 0b0000000111111000;
+	//Velue ramdom
+	unsigned char random_no=0;
+
+	//PORT B Config
+	ADPCFG=0x01FF; 			// Config ProtB = Analog = "0",Digital = "1"
+	TRISB=0x01F0;  			// RB6 - RB4 = Input, and RB3 - RB0 = Output
+				   			//0b 0000 0001 1111 0000
+	//PORT E Config
+	TRIS_LED = 0x0000;//Out (0=Out, 1=In)
+	TRIS_LED2 = 0x0000;//Out
+	TRIS_SW1 = 0x1111; //In
+	//Initialize
+	uart1_init();  // initialize the UART1
+	putsUART1((unsigned int *)"\r*********** Press [*] to start ***********\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+	while(BusyUART1());
+	while(current_key == '.') //Check that press
+	{
+		current_key = scankey();
+	}
+	if(current_key == '*') //if press * to start
+	{
+		current_key = '.';
+	}
+	else
+	{
+		;
+	}
+	ALLrun(); //all function 
+	return 0;
+
+
+}
+//END Main
+
+
+	
+void uart1_init(void)
+{
+	//Variables
+	unsigned int baudvalue;
+	unsigned int U1MODEvalue;
+	unsigned int U1STAvalue;
+	//Close UART1
+	CloseUART1();
+	//Open UART1
+	U1MODEvalue = UART_EN &
+				  UART_IDLE_CON &
+				  //0xFBE7 &
+				  UART_DIS_WAKE &
+				  UART_DIS_LOOPBACK  &
+				  UART_DIS_ABAUD &
+				  UART_NO_PAR_8BIT &
+				  UART_1STOPBIT;
+
+	U1STAvalue =  UART_INT_TX_BUF_EMPTY &
+				  UART_TX_PIN_NORMAL &
+				  UART_TX_ENABLE &
+				  UART_INT_RX_3_4_FUL &
+				  UART_ADR_DETECT_DIS &
+				  UART_RX_OVERRUN_CLEAR;
+
+	baudvalue = 47; // How to calculate 
+	OpenUART1(U1MODEvalue, U1STAvalue, baudvalue);
+
+}	
+
+char scankey(void)
+{
+
+	char key = '.' ;
+
+//-----------------------------ROW1-------------------------------------//	
+	PORTB = 0x01FE;		//0b 0000 0001 1111 1110;
+	Delay_MS(5);
+	if(Col1 == 0)			{key = '1';}
+	else if(Col2 == 0)		{key = '2';}
+	else if(Col3 == 0)		{key = '3';}
+	else				    ;
+	while((Col1 ==0) || (Col2 ==0) || (Col3 ==0)); // Waiting for key
+
+//-----------------------------ROW2-------------------------------------//
+	Delay_MS(5);
+	PORTB = 0x01FD;		//0b 0000 0001 1111 1101;
+	Delay_MS(5);
+	if(Col1 ==0)			{key = '4';}
+	else if(Col2 ==0)		{key = '5';}
+	else if(Col3 ==0)		{key = '6';}
+	else					;
+	while((Col1 ==0) || (Col2 ==0) || (Col3 ==0)); // Waiting for key
+//-----------------------------ROW3-------------------------------------//
+	Delay_MS(5);
+	PORTB = 0x01FB;		//0b 0000 0001 1111 1011;
+	Delay_MS(5);
+	if(Col1 ==0)			{key = '7';}
+	else if(Col2 ==0)		{key = '8';}
+	else if(Col3 ==0)		{key = '9';}
+	else					;
+	while((Col1 ==0) || (Col2 ==0) || (Col3 ==0)); // Waiting for key
+//-----------------------------ROW4-------------------------------------//
+	Delay_MS(5);
+	PORTB = 0x01F7;		//0b 0000 0001 1111 0111;
+	Delay_MS(5);
+	if(Col1 ==0)			{key = '*';}
+	else if(Col2 ==0)		{key = '0';}
+	else if(Col3 ==0)		{key = '#';}
+	else					;
+	while((Col1 ==0) || (Col2 ==0) || (Col3 ==0)); // Waiting for key
+
+	return key;	
+	
+
+}
+//Set velue LED from coutend
+void Coutend(int coutend)
+{
+	if(coutend==8)
+	{
+		LATE = 0b0000000100000000; 
+	}
+	else if(coutend==7)
+	{
+		LATE = 0b0000000110000000; 
+	}
+	else if(coutend==6)
+	{
+		LATE = 0b0000000111000000; 
+	}
+	else if(coutend==5)
+	{
+		LATE = 0b0000000111100000; 
+	}
+	else if(coutend==4)
+	{
+		LATE = 0b0000000111110000; 
+	}
+	else if(coutend==3)
+	{
+		LATE = 0b0000000111111000; 
+	}
+	else if(coutend==2)
+	{
+		LATE = 0b0000000111111100; 
+	}
+	else if(coutend==1)
+	{
+		LATE = 0b0000000111111110; 
+	}
+	else if(coutend==0) //if coutend = 0 and "Game Over" 
+	{	
+		LATE = 0b0000000111111111; 
+		Timer2_Init();
+		putsUART1((unsigned int *)"\n!!!!!!Game Over!!!!!!");
+		while(BusyUART1());
+		sprintf(uart_buf,"\n\rLP = %d\r\n",coutend);
+		putsUART1((unsigned int *)uart_buf); 
+		while(BusyUART1());
+		sprintf(uart_buf,"Score = %d\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",score);
+		putsUART1((unsigned int *)uart_buf); 
+		while(BusyUART1());
+		while(1)
+		{
+			;
+		}	
+	}
+	
+}
+void Quiz(void)
+{
+	
+	if(o== 1)
+	{
+		putsUART1((unsigned int *)"\r\n 1+2+3 = ? \r\n");
+		while(BusyUART1());
+	}
+
+	else if(o== 2)
+	{
+		putsUART1((unsigned int *)"\r\n 2+3-1 = ? \r\n");
+		while(BusyUART1());
+	}
+
+	else if(o== 3)
+	{
+		putsUART1((unsigned int *)"\r\n 5+1-5 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 4)
+	{
+		putsUART1((unsigned int *)"\r\n 4+3-7 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 5)
+	{
+		putsUART1((unsigned int *)"\r\n 5+5-5 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 6)
+	{
+		putsUART1((unsigned int *)"\r\n 7+1+1 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 7)
+	{
+		putsUART1((unsigned int *)"\r\n 4+1-4 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 8)
+	{
+		putsUART1((unsigned int *)"\r\n 3+3-3+3 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 9)
+	{
+		putsUART1((unsigned int *)"\r\n 10-1-8 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 10)
+	{
+		putsUART1((unsigned int *)"\r\n 1+2+3+4+5 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 11)
+	{
+		putsUART1((unsigned int *)"\r\n 2x2 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 12)
+	{
+		putsUART1((unsigned int *)"\r\n 4x3 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 13)
+	{
+		putsUART1((unsigned int *)"\r\n 2x8 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 14)
+	{
+		putsUART1((unsigned int *)"\r\n 4/2 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 15)
+	{
+		putsUART1((unsigned int *)"\r\n 10/5 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 16)
+	{
+		putsUART1((unsigned int *)"\r\n 2x3x4 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 17)
+	{
+		putsUART1((unsigned int *)"\r\n 4+3x2 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 18)
+	{
+		putsUART1((unsigned int *)"\r\n 5x2/2 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 19)
+	{
+		putsUART1((unsigned int *)"\r\n 5x3-2+6/2 = ? \r\n");
+		while(BusyUART1());
+	}
+	else if(o== 0)
+	{
+		putsUART1((unsigned int *)"\r\n 5+5 = ? \r\n");
+		while(BusyUART1());
+	}
+	else 
+	{
+		;
+	}
+	putsUART1((unsigned int *)"\r\nPlease any Key :  \r\n");
+	while(BusyUART1());
+}
+void YN(void)
+{
+	
+	while(1)
+	{
+		// Scankey
+		// Send the key to Computer
+		while(LoopSt==1)
+		{
+			LoopSt=0;
+			while(current_key == '.')
+			{
+				current_key = scankey();
+				SWRandom(); //Check that press switch
+ 			}
+			spec=1;
+			Delay_MS(10);
+			putcUART1(current_key);
+			while(current_key1 == '.')
+			{
+				current_key1 = scankey();
+				SWRandom();
+			}
+			Delay_MS(10);
+			if(current_key1!='#') //press # for confirm answer
+			{
+				putcUART1(current_key1);
+				while(current_key2 == '.')
+				{
+					current_key2 = scankey();
+					SWRandom();
+				}
+				if(current_key2!='#')//press # for confirm answer
+				{
+					putsUART1((unsigned int *)"\r\nYou input key too much\r\n");
+					while(BusyUART1());
+					putsUART1((unsigned int *)"\r\nPlease any Key :  \r\n");
+					while(BusyUART1());
+				}
+			}
+		}
+		if(current_key != '.') //Check that correct or wrong
+		{
+			if(o==1)
+			{
+				if((current_key =='6' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();				
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==2)
+			{
+				if((current_key =='4' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}	
+			if(o==3)
+			{
+				if((current_key =='1' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==4)
+			{
+				if((current_key =='0' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==5)
+			{
+				if((current_key =='5' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==6)
+			{
+				if((current_key =='9' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==7)
+			{
+				if((current_key =='1' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==8)
+			{
+				if((current_key =='6' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==9)
+			{
+				if((current_key =='1' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==10)
+			{
+				if((current_key =='1' )&& (current_key1 =='5')&& (current_key2 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==11)
+			{
+				if((current_key =='4' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==12)
+			{
+				if((current_key =='1' )&& (current_key1 =='2')&& (current_key2 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==13)
+			{
+				if((current_key =='1' )&& (current_key1 =='6')&& (current_key2 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==14)
+			{
+				if((current_key =='2' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==15)
+			{
+				if((current_key =='2' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==16)
+			{
+				if((current_key =='2' )&& (current_key1 =='4')&& (current_key2 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==17)
+			{
+				if((current_key =='1' )&& (current_key1 =='0')&& (current_key2 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==18)
+			{
+				if((current_key =='5' )&& (current_key1 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==19)
+			{
+				if((current_key =='1' )&& (current_key1 =='6')&& (current_key2 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}
+			if(o==0)
+			{
+				if((current_key =='1' )&& (current_key1 =='0')&& (current_key2 =='#'))
+				{
+					Correct();
+				}
+				else
+				{
+					Wrong();
+				}
+			}
+			else
+			{
+				;
+			}					
+		}
+		else
+		{
+			;
+		}
+	break;
+	}
+
+	//Change this to default.
+	OUT2_1 = 1; 
+	current_key = '.' ;
+	current_key1 = '.' ;
+	current_key2 = '.' ;
+	LoopSt=1;	
+	spec=0;
+}
+//function open timer
+void Timer1_Init(void)
+{
+	unsigned int config,period;
+	CloseTimer1();
+	ConfigIntTimer1(T1_INT_ON);
+	config=T1_ON &
+	T1_IDLE_STOP &
+	T1_GATE_OFF &
+	T1_PS_1_64 &
+	T1_SYNC_EXT_OFF &
+	T1_SOURCE_INT;
+	period=57604;
+	OpenTimer1(config,period);
+}
+//function close timer
+void Timer2_Init(void)
+{
+	unsigned int config,period;
+	CloseTimer1();
+	ConfigIntTimer1(T1_INT_ON);
+	config=T1_OFF &
+	T1_IDLE_STOP &
+	T1_GATE_OFF &
+	T1_PS_1_64 &
+	T1_SYNC_EXT_OFF &
+	T1_SOURCE_INT;
+	period=57604;
+	OpenTimer1(config,period);
+}
+
+void Correct(void)
+{
+	putsUART1((unsigned int *)"\r\n !!!!!Correct!!!!! \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+	while(BusyUART1());
+	OUT2_1 = 0; ////Blue LED ON
+	Timer2_Init();
+	Delay_MS(5000);
+	countdown=10;
+	Loop1=0;
+	spec=0;
+	score++; //if correct score + 1
+	if(score==8)
+	{
+		
+		putsUART1((unsigned int *)"\r\n !!!!! YOU ARE GOD OF MATH !!!!! ");
+		while(BusyUART1());
+		sprintf(uart_buf,"\n\rLP = %d\r\n",coutend);
+		putsUART1((unsigned int *)uart_buf); 
+		while(BusyUART1());
+		sprintf(uart_buf,"Score = %d\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",score);
+		putsUART1((unsigned int *)uart_buf); 
+		while(BusyUART1());
+		while(1)
+		{
+			;
+		}
+	}
+}
+void Wrong(void)
+{
+	putsUART1((unsigned int *)"\r\n !!!!!Wrong!!!!! \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+	while(BusyUART1());
+	OUT2_0 = 0; //Red LED ON
+	Delay_MS(1000);
+	Loop1=1;	
+	coutend=coutend-1; //if wrong LP - 1
+}
+
+void Random(void)
+{
+	srand(time(NULL));
+	t=rand()%20;
+	if(Loop1==0)
+	{	
+		Loop2=0;
+		while(Loop2==0)
+		{
+			for(i=0;i<15;i++)//Check if the question is repeated
+			{
+				if(t==notfix[i])
+				{
+					t=rand()%20;	
+				}
+				else
+				{
+					if(i==14)
+					{
+						notfix[cnotfix]=t;
+						Loop2=1;
+					}
+					else
+					{
+						;
+					}	
+				}
+			}
+		}
+		cnotfix++;
+		o = t ;
+		x = o ; //Get value Question from Wrong
+	}
+	else
+	{
+		o = x ;
+	}
+}
+void ALLrun(void)
+{
+	while(1)
+	{
+		Random(); //Random value Question
+		Coutend(coutend); //Show value LP
+
+		//Check Red and Blue LED
+		OUT2_1 = 1; 
+		Delay_MS(50);
+		OUT2_0 = 1;
+		Delay_MS(50);
+
+		sprintf(uart_buf,"\n\rLP = %d",coutend);
+		putsUART1((unsigned int *)uart_buf); 
+		while(BusyUART1());
+		sprintf(uart_buf,"\r\nSkip = %d\r\n",skip);
+		putsUART1((unsigned int *)uart_buf);
+		while(BusyUART1()); 
+		sprintf(uart_buf,"Score = %d\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",score);
+		putsUART1((unsigned int *)uart_buf); 
+		while(BusyUART1());
+		Quiz();//Show Question from random 
+		Timer1_Init();//open timer
+		YN();//Check Answer
+	}	
+}
+
+void SWRandom(void)
+{
+	if(IN2_0==1)
+	{
+		if(skip>0)//if skip > 0 will can skip Question
+		{
+			Delay_MS(500);
+			skip--;
+			countdown=10;
+			ALLrun();//run function ALLrun again
+		}
+		else
+		{
+			;
+		}
+	}
+	else
+	{
+		;
+	}
+	
+}
+
+void Delay_MS(int ms)
+{
+	unsigned int i;
+	for(; ms>0; ms--)
+		for(i=0; i<728; i++)
+			Nop();
+}
